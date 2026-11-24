@@ -43,11 +43,13 @@ export default function 台面() {
       <p className="述">先装流水，再按营业日做日终抽取写周期快照，最后回放核对看差额清单是否清空。</p>
       <div className="提示条">
         最短路径：点「一键冒烟」→ 打开 <Link to="/周期快照">周期快照</Link> 与 <Link to="/差额清单">差额清单</Link>。
+        父子汇总见 <Link to="/父镜">父镜固化</Link>：父=子和、父键流水旁置、篡改子快照报指纹失配。
       </div>
       <div className="阶条">
         <div className="阶"><div className="序">账户</div><b>{o.账户数 ?? "—"}</b><span>册内户数</span></div>
         <div className="阶"><div className="序">流水</div><b>{o.流水数 ?? "—"}</b><span>已入账</span></div>
         <div className="阶"><div className="序">快照</div><b>{o.快照数 ?? "—"}</b><span>有效行</span></div>
+        <div className="阶"><div className="序">父镜</div><b>{o.父镜数 ?? "—"}</b><span>固化行</span></div>
         <div className="阶"><div className="序">差额</div><b>{o.差额行数 ?? "—"}</b><span>清单行</span></div>
         <div className="阶"><div className="序">旁置</div><b>{o.旁置数 ?? "—"}</b><span>未入账</span></div>
       </div>

@@ -3,7 +3,9 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from app.db import 夹具目录, 连接
+from app.modules import 子户汇总镜
 from app.services import 回放, 抽取, 目录, 装载
+from app.services import 父镜演练 as 父镜演练服务
 
 路由 = APIRouter(prefix="/api")
 
@@ -16,6 +18,21 @@ class 装载请求(BaseModel):
 class 营业日请求(BaseModel):
     营业日: str
     批次编号: str = ""
+
+
+class 父镜请求(BaseModel):
+    账户键: str
+    营业日: str
+    批次编号: str = ""
+
+
+class 父子请求(BaseModel):
+    子户键: str
+    父户键: str
+
+
+class 解绑请求(BaseModel):
+    子户键: str
 
 
 @路由.get("/健康")
@@ -202,6 +219,10 @@ def _装载夹具文件(名: str):
 def 执行抽取(体: 营业日请求):
     try:
         return 抽取.日终抽取(体.营业日, 体.批次编号)
+    except 子户汇总镜.缺子异常 as e:
+        raise HTTPException(
+            409, {"原因": "父镜未成·缺子户快照", "父户键": e.父户键, "营业日": e.营业日, "缺子": e.缺子}
+        ) from e
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
 
@@ -223,6 +244,7 @@ def 重置():
             "变动流水",
             "抽取批次",
             "周期快照",
+            "父镜",
             "回放批次",
             "差额行",
             "断档记录",
@@ -235,3 +257,62 @@ def 重置():
         return {"完成": True, **目录.总览()}
     finally:
         conn.close()
+
+
+@路由.get("/父镜")
+def 列父镜(营业日: str = "", 账户键: str = "", 含失效: bool = False):
+    """父对外主读：只返回父镜固化行，不 JOIN 子表。"""
+    return 子户汇总镜.列父镜(营业日, 账户键, 含失效)
+
+
+@路由.get("/父镜/行")
+def 取父镜(账户键: str, 营业日: str):
+    """父对外主读单行：只读父镜固化表，不 JOIN 子表。"""
+    row = 子户汇总镜.读取父镜(账户键, 营业日)
+    if row is None:
+        raise HTTPException(404, f"父镜不存在: {账户键} {营业日}")
+    return row
+
+
+@路由.post("/父镜/核证")
+def 核证父镜(体: 父镜请求):
+    """只读核证：固化值 vs 现场重算 + 指纹匹配。不改任何固化行。"""
+    return 子户汇总镜.核证(体.账户键, 体.营业日)
+
+
+@路由.post("/父镜/重汇总")
+def 重汇总父镜(体: 父镜请求):
+    try:
+        return 子户汇总镜.重汇总(体.账户键, 体.营业日, 体.批次编号)
+    except 子户汇总镜.缺子异常 as e:
+        raise HTTPException(
+            409, {"原因": "父镜未成·缺子户快照", "父户键": e.父户键, "营业日": e.营业日, "缺子": e.缺子}
+        ) from e
+    except 子户汇总镜.配置异常 as e:
+        raise HTTPException(400, str(e)) from e
+
+
+@路由.post("/父镜/配置")
+def 配置父户(体: 父子请求):
+    try:
+        return 子户汇总镜.配置父户(体.子户键, 体.父户键)
+    except 子户汇总镜.配置异常 as e:
+        raise HTTPException(400, str(e)) from e
+
+
+@路由.post("/父镜/解绑")
+def 解绑父户(体: 解绑请求):
+    try:
+        return 子户汇总镜.解绑父户(体.子户键)
+    except 子户汇总镜.配置异常 as e:
+        raise HTTPException(400, str(e)) from e
+
+
+@路由.post("/父镜/演练")
+def 父镜演练(体: 夹具请求):
+    try:
+        return 父镜演练服务.演练(体.名)
+    except FileNotFoundError as e:
+        raise HTTPException(404, str(e)) from e
+    except (子户汇总镜.缺子异常, 子户汇总镜.配置异常) as e:
+        raise HTTPException(409, str(e)) from e

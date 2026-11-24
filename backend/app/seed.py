@@ -12,7 +12,22 @@ CREATE TABLE IF NOT EXISTS 账户 (
   户名 TEXT NOT NULL,
   币种 TEXT NOT NULL DEFAULT 'CNY',
   开户营业日 TEXT NOT NULL,
-  状态 TEXT NOT NULL DEFAULT '正常'
+  状态 TEXT NOT NULL DEFAULT '正常',
+  父户键 TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS 父镜 (
+  快照键 TEXT PRIMARY KEY,
+  账户键 TEXT NOT NULL,
+  营业日 TEXT NOT NULL,
+  余额 INTEGER NOT NULL,
+  子户数 INTEGER NOT NULL,
+  子指纹集 TEXT NOT NULL,
+  汇总指纹 TEXT NOT NULL,
+  抽取批次编号 TEXT NOT NULL,
+  来源 TEXT NOT NULL DEFAULT '子户汇总',
+  状态 TEXT NOT NULL DEFAULT '有效',
+  时刻 TEXT NOT NULL,
+  UNIQUE(账户键, 营业日)
 );
 CREATE TABLE IF NOT EXISTS 变动流水 (
   流水号 TEXT PRIMARY KEY,
@@ -121,9 +136,17 @@ def 此刻() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def _迁移(conn) -> None:
+    """旧库补列/补表；幂等。"""
+    列 = {r["name"] for r in conn.execute("PRAGMA table_info(账户)")}
+    if "父户键" not in 列:
+        conn.execute("ALTER TABLE 账户 ADD COLUMN 父户键 TEXT NOT NULL DEFAULT ''")
+
+
 def 初始化库() -> None:
     conn = 连接()
     conn.executescript(建表)
+    _迁移(conn)
     if conn.execute("SELECT COUNT(*) AS c FROM 台参").fetchone()["c"] == 0:
         for k, v in {
             "站名": "日镜账",
@@ -132,17 +155,22 @@ def 初始化库() -> None:
             "断档处置": "记断档并继续",
             "缺前日策略": "以零为开端",
             "重复抽取": "盖写同日快照",
+            "父镜口径": "乙·指纹固化",
+            "父键流水": "旁置不入汇总",
         }.items():
             conn.execute("INSERT INTO 台参(键, 值) VALUES (?, ?)", (k, v))
     if conn.execute("SELECT COUNT(*) AS c FROM 账户").fetchone()["c"] == 0:
-        for 键, 名, 日 in [
-            ("户甲", "甲收单户", "2026-11-01"),
-            ("户乙", "乙结算户", "2026-11-01"),
-            ("户丙", "丙备用户", "2026-11-05"),
+        for 键, 名, 日, 父 in [
+            ("户甲", "甲收单户", "2026-11-01", ""),
+            ("户乙", "乙结算户", "2026-11-01", ""),
+            ("户丙", "丙备用户", "2026-11-05", ""),
+            ("户汇总", "汇总户", "2026-11-01", ""),
+            ("户子甲", "子户甲", "2026-11-01", "户汇总"),
+            ("户子乙", "子户乙", "2026-11-01", "户汇总"),
         ]:
             conn.execute(
-                "INSERT INTO 账户(账户键, 户名, 币种, 开户营业日, 状态) VALUES (?,?,?,?,?)",
-                (键, 名, "CNY", 日, "正常"),
+                "INSERT INTO 账户(账户键, 户名, 币种, 开户营业日, 状态, 父户键) VALUES (?,?,?,?,?,?)",
+                (键, 名, "CNY", 日, "正常", 父),
             )
     conn.commit()
     conn.close()

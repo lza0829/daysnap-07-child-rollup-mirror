@@ -3,6 +3,7 @@ import uuid
 from typing import Any
 
 from app.db import 连接
+from app.modules import 子户汇总镜
 from app.services.时间 import 此刻, 标准化营业日
 
 
@@ -25,6 +26,7 @@ def 回放核对(营业日: str, 批次编号: str = "") -> dict[str, Any]:
         except ValueError:
             阈值 = 0
         账户们 = [dict(r) for r in conn.execute("SELECT * FROM 账户 WHERE 状态='正常'")]
+        父集 = {str(x["账户键"]) for x in 子户汇总镜.父户们(conn)}
         相符 = 0
         差额数 = 0
         跳变数 = 0
@@ -46,6 +48,40 @@ def 回放核对(营业日: str, 批次编号: str = "") -> dict[str, Any]:
                 )
                 差额数 += 1
                 continue
+            快照余额 = int(快照["余额"])
+            if 账户键 in 父集:
+                # 父镜：仅核对固化行与现场子汇总/指纹是否一致，不读父键流水。
+                现场 = 子户汇总镜.现场汇总(conn, 账户键, 日, 严格=False)
+                父镜行 = conn.execute(
+                    "SELECT 余额, 汇总指纹 FROM 父镜 WHERE 账户键=? AND 营业日=?",
+                    (账户键, 日),
+                ).fetchone()
+                固化指纹 = "" if 父镜行 is None else str(父镜行["汇总指纹"])
+                匹配 = (
+                    父镜行 is not None
+                    and 快照余额 == int(现场["余额"])
+                    and 固化指纹 == str(现场["汇总指纹"])
+                    and not 现场["缺子"]
+                )
+                if 匹配:
+                    相符 += 1
+                else:
+                    conn.execute(
+                        "INSERT INTO 差额行(回放批次编号, 账户键, 营业日, 快照余额, 回放余额, 差额, 原因, 时刻) "
+                        "VALUES (?,?,?,?,?,?,?,?)",
+                        (
+                            批,
+                            账户键,
+                            日,
+                            int(现场["余额"]),
+                            快照余额,
+                            快照余额 - int(现场["余额"]),
+                            "父镜子汇总指纹失配",
+                            此刻(),
+                        ),
+                    )
+                    差额数 += 1
+                continue
             前 = _前日(日)
             前日快照 = conn.execute(
                 "SELECT 余额 FROM 周期快照 WHERE 账户键=? AND 营业日=? AND 状态='有效'",
@@ -60,7 +96,6 @@ def 回放核对(营业日: str, 批次编号: str = "") -> dict[str, Any]:
                 ).fetchone()["s"]
             )
             回放余额 = 开端 + 净额
-            快照余额 = int(快照["余额"])
             差额 = 快照余额 - 回放余额
             if 差额 == 0:
                 相符 += 1

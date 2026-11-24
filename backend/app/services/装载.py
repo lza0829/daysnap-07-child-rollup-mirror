@@ -3,6 +3,7 @@ import uuid
 from typing import Any
 
 from app.db import 连接
+from app.modules import 子户汇总镜
 from app.services.时间 import 此刻, 标准化营业日
 
 
@@ -30,6 +31,20 @@ def 装载流水(事件: list[dict[str, Any]], 批次编号: str = "") -> dict:
                 conn.execute(
                     "INSERT INTO 旁置簿(原因, 账户键, 营业日, 载荷, 时刻) VALUES (?,?,?,?,?)",
                     ("未知账户", 账户键, "", json.dumps(raw, ensure_ascii=False), 此刻()),
+                )
+                旁置 += 1
+                continue
+            if 子户汇总镜.是父户(conn, 账户键):
+                # 父键直接流水不得参与汇总，装载即旁置。
+                conn.execute(
+                    "INSERT INTO 旁置簿(原因, 账户键, 营业日, 载荷, 时刻) VALUES (?,?,?,?,?)",
+                    (
+                        "父键直接流水",
+                        账户键,
+                        str(raw.get("营业日") or ""),
+                        json.dumps(raw, ensure_ascii=False),
+                        此刻(),
+                    ),
                 )
                 旁置 += 1
                 continue
